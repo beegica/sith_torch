@@ -100,7 +100,7 @@ class AleEnv(object):
             out = np.squeeze(out)
 
             if expand_dim is True:
-                return np.expand_dims(out, axis=1)
+                return np.expand_dims(np.expand_dims(out, axis=0), axis=1)
 
             else:
                 return out
