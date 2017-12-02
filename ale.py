@@ -26,8 +26,8 @@ class AleEnv(object):
     # will include timing and hidden functionality in future iterations
 
     def __init__(
-            self, rom_file, display_screen=False, sound=False,
-            random_seed=0, game_over_conditions={'points':(-1, 1)},
+            self, rom_file, display_screen=False, sound=False, 
+            random_seed=0, game_over_conditions={},
             frame_skip=1, repeat_action_probability=0.25,
             max_num_frames_per_episode=0, min_action_set=False,
             screen_color='gray', fps=60, output_buffer_size=1,
@@ -40,7 +40,7 @@ class AleEnv(object):
 
         self.ale.setBool(b'sound', sound)
         self.ale.setBool(b'display_screen', display_screen)
-
+        
         if min_action_set:
             self.legal_actions = self.ale.getMinimalActionSet()
         else:
@@ -54,45 +54,23 @@ class AleEnv(object):
 
         self.ale.loadROM(str.encode(rom_file))
 
-        # environment variables
-        self.total_points = 0
         self.game_over_conditions = game_over_conditions
-        self.total_frames = self.ale.getFrameNumber()
-        self.curr_episode = 1
-        self.prev_ep_frame_num = -float("inf")
-
-        self.reduce_screen = reduce_screen
         self.screen_color = screen_color
-        if self.screen_color == 'gray' or self.screen_color == 'grey':
-            self.game_screen = np.squeeze(self.ale.getScreenGrayscale())
-            if self.reduce_screen:
-                self.game_screen = resize(self.game_screen, output_shape=(110, 84))
-                self.game_screen = self.game_screen[0+21:-1-4, :]
-                self.game_screen[self.game_screen > 0.0] = 1
-                #self.game_screen = self.game_screen[::2, ::2]
-        elif self.screen_color == 'rgb' or self.screen_color == 'color':
-            self.game_screen = self.ale.getScreenRGB()
-            if self.reduce_screen:
-                self.game_screen = resize(self.game_screen, output_shape=(110, 84, 3))
-                self.game_screen = self.game_screen[0+21:-1-4, :, :]
-                #self.game_screen = self.game_screen[::2, ::2]
-        else:
-            raise RuntimeError("ERROR: Invalid screen_color value")
-
+        self.reduce_screen = reduce_screen
         self.d_frame = (fps**-1) * self.frame_skip
 
         # set up output buffer
         self.output_buffer_size = output_buffer_size
         self.queue_size = self.output_buffer_size
-        self.reset()
-
+        self._reset_params()
+    
     def observe(self, flatten=False, expand_dim=False):
-
+    
         if flatten is True:
             out = np.stack(self.output_queue[i] for i in range(self.output_buffer_size)).flatten()
 
             if expand_dim is True:
-                return np.expand_dims(out, axis=0)
+                return np.expand_dims(np.expand_dims(out, axis=0), axis=1)
             else:
                 return out
         else:
@@ -125,8 +103,24 @@ class AleEnv(object):
     def lives(self):
         return self.ale.lives()
 
-    def reset(self):
-        self.ale.reset_game()
+    def _reset_params(self):
+
+        self.total_points = 0
+        self.total_frames = 0 
+        self.curr_episode = 1
+        self.prev_ep_frame_num = -float("inf")
+
+        if self.screen_color == 'gray' or self.screen_color == 'grey': 
+            self.game_screen = np.squeeze(self.ale.getScreenGrayscale())
+            if self.reduce_screen:
+                self.game_screen = resize(self.game_screen, output_shape=(110, 84))
+                self.game_screen = self.game_screen[0+21:-1-4, :] 
+        elif self.screen_color == 'rgb' or self.screen_color == 'color': 
+            self.game_screen = self.ale.getScreenRGB()
+            if self.reduce_screen:
+                self.game_screen = resize(self.game_screen, output_shape=(110, 84, 3))
+                self.game_screen = self.game_screen[0+21:-1-4, :, :] 
+
         self.output_queue = deque(np.zeros(shape=(self.queue_size -1,
                                                     self.height,
                                                     self.width)),
@@ -134,27 +128,30 @@ class AleEnv(object):
         self.output_queue.appendleft(self.game_screen)
 
 
+    def reset(self):
+        self.ale.reset_game()
+        self._reset_params()
+
+
     def act(self, action):
         reward = self.ale.act(self.legal_actions[action])
-        if self.screen_color == 'gray' or self.screen_color == 'grey':
+
+        if self.screen_color == 'gray' or self.screen_color == 'grey': 
             self.game_screen = np.squeeze(self.ale.getScreenGrayscale())
             if self.reduce_screen:
                 self.game_screen = resize(self.game_screen, output_shape=(110, 84))
-                self.game_screen = self.game_screen[0+21:-1-4, :]
-                self.game_screen[self.game_screen > 0.0] = 1
-                #self.game_screen = self.game_screen[::2, ::2]
-        elif self.screen_color == 'rgb' or self.screen_color == 'color':
+                self.game_screen = self.game_screen[0+21:-1-4, :] 
+        elif self.screen_color == 'rgb' or self.screen_color == 'color': 
             self.game_screen = self.ale.getScreenRGB()
             if self.reduce_screen:
                 self.game_screen = resize(self.game_screen, output_shape=(110, 84, 3))
-                self.game_screen = self.game_screen[0+21:-1-4, :, :]
-                #self.game_screen = self.game_screen[::2, ::2, :]
+                self.game_screen = self.game_screen[0+21:-1-4, :, :] 
 
         self.output_queue.pop()
         self.output_queue.appendleft(self.game_screen)
 
         self.total_points += reward
-        self.total_frames += self.ale.getFrameNumber()
+        self.total_frames += self.frame_skip
         if self.ale.getEpisodeFrameNumber() <= self.prev_ep_frame_num:
             self.curr_episode += 1
         self.prev_ep_frame_num = self.ale.getEpisodeFrameNumber()
@@ -164,6 +161,7 @@ class AleEnv(object):
     def _game_over(self):
         if self.ale.game_over():
             return True
+
         for cond in self.game_over_conditions:
             if cond == 'points':
                 if isinstance(self.game_over_conditions[cond], int):
@@ -190,13 +188,27 @@ class AleEnv(object):
 
 if __name__ == "__main__":
     #ale = AleEnv("space_invaders.bin", min_action_set = True, display_screen=True)
-    ale = AleEnv("breakout.a26", min_action_set = True, display_screen=True)
+    ale = AleEnv("breakout.a26", min_action_set = True, display_screen=False,
+            game_over_conditions={"lives": 4, "frames":40}, frame_skip=4)
+
     print(ale.observe().shape)
     print(ale.width)
     print(ale.height)
     print(ale.actions)
 
-    for i in range(2000):
-        a = randrange(len(ale.actions))
-        ale.act(a)
-        print(ale.actions, ale.curr_episode, ale.lives, ale.total_points, a)
+    print(ale.game_over)
+
+    for i in range(1000):
+        if i in (0, 1):
+            a = 1
+            ale.act(1)
+        else:
+            a = randrange(0, 4)
+            ale.act(a)
+        print("Curr episode: ", ale.curr_episode, "Lives: ", ale.lives, "Total points: ", ale.total_points, "actions: ", a,
+                "Curr frame total: ", ale.total_frames)
+
+        if ale.game_over:
+            print("********Game Over*********")
+            ale.reset()
+
